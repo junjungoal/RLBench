@@ -27,16 +27,12 @@ class Scene(object):
     sure that the tasks are easily reachable. This may be just replaced by
     environment. Responsible for moving all the objects. """
 
-    def __init__(self,
-                 pyrep: PyRep,
-                 robot: Robot,
-                 obs_config: ObservationConfig = ObservationConfig(),
-                 robot_setup: str = 'panda'):
-        self.pyrep = pyrep
-        self.robot = robot
-        self.robot_setup = robot_setup
-        self.task = None
+    def __init__(self, pyrep: PyRep, robot: Robot,
+                 obs_config=ObservationConfig()):
+        self._pyrep = pyrep
+        self._robot = robot
         self._obs_config = obs_config
+        self._active_task = None
         self._initial_task_state = None
         self._start_arm_joint_pos = robot.arm.get_joint_positions()
         self._starting_gripper_joint_pos = robot.gripper.get_joint_positions()
@@ -75,7 +71,7 @@ class Scene(object):
         self.target_workspace_check = Dummy.create()
         self._step_callback = None
 
-        self._robot_shapes = self.robot.arm.get_objects_in_tree(
+        self._robot_shapes = self._robot.arm.get_objects_in_tree(
             object_type=ObjectType.SHAPE)
 
     def load(self, task: Task) -> None:
@@ -89,24 +85,24 @@ class Scene(object):
         task.get_base().set_position(self._workspace.get_position())
 
         self._initial_task_state = task.get_state()
-        self.task = task
+        self._active_task = task
         self._initial_task_pose = task.boundary_root().get_orientation()
         self._has_init_task = self._has_init_episode = False
         self._variation_index = 0
 
     def unload(self) -> None:
         """Clears the scene. i.e. removes all tasks. """
-        if self.task is not None:
-            self.robot.gripper.release()
+        if self._active_task is not None:
+            self._robot.gripper.release()
             if self._has_init_task:
-                self.task.cleanup_()
-            self.task.unload()
-        self.task = None
+                self._active_task.cleanup_()
+            self._active_task.unload()
+        self._active_task = None
         self._variation_index = 0
 
     def init_task(self) -> None:
-        self.task.init_task()
-        self._initial_task_state = self.task.get_state()
+        self._active_task.init_task()
+        self._initial_task_state = self._active_task.get_state()
         self._has_init_task = True
         self._variation_index = 0
 
@@ -124,60 +120,58 @@ class Scene(object):
         attempts = 0
         descriptions = None
         while attempts < max_attempts:
-            descriptions = self.task.init_episode(index)
+            descriptions = self._active_task.init_episode(index)
             try:
                 if (randomly_place and
-                        not self.task.is_static_workspace()):
+                        not self._active_task.is_static_workspace()):
                     self._place_task()
-                    if self.robot.arm.check_arm_collision():
-                        raise BoundaryError()
-                self.task.validate()
+                self._active_task.validate()
                 break
             except (BoundaryError, WaypointError) as e:
-                self.task.cleanup_()
-                self.task.restore_state(self._initial_task_state)
+                self._active_task.cleanup_()
+                self._active_task.restore_state(self._initial_task_state)
                 attempts += 1
                 if attempts >= max_attempts:
                     raise e
 
         # Let objects come to rest
-        [self.pyrep.step() for _ in range(STEPS_BEFORE_EPISODE_START)]
+        [self._pyrep.step() for _ in range(STEPS_BEFORE_EPISODE_START)]
         self._has_init_episode = True
         return descriptions
 
     def reset(self) -> None:
         """Resets the joint angles. """
-        self.robot.gripper.release()
+        self._robot.gripper.release()
 
         arm, gripper = self._initial_robot_state
-        self.pyrep.set_configuration_tree(arm)
-        self.pyrep.set_configuration_tree(gripper)
-        self.robot.arm.set_joint_positions(self._start_arm_joint_pos, disable_dynamics=True)
-        self.robot.arm.set_joint_target_velocities(
-            [0] * len(self.robot.arm.joints))
-        self.robot.gripper.set_joint_positions(
+        self._pyrep.set_configuration_tree(arm)
+        self._pyrep.set_configuration_tree(gripper)
+        self._robot.arm.set_joint_positions(self._start_arm_joint_pos, disable_dynamics=True)
+        self._robot.arm.set_joint_target_velocities(
+            [0] * len(self._robot.arm.joints))
+        self._robot.gripper.set_joint_positions(
             self._starting_gripper_joint_pos, disable_dynamics=True)
-        self.robot.gripper.set_joint_target_velocities(
-            [0] * len(self.robot.gripper.joints))
+        self._robot.gripper.set_joint_target_velocities(
+            [0] * len(self._robot.gripper.joints))
 
-        if self.task is not None and self._has_init_task:
-            self.task.cleanup_()
-            self.task.restore_state(self._initial_task_state)
-        self.task.set_initial_objects_in_scene()
+        if self._active_task is not None and self._has_init_task:
+            self._active_task.cleanup_()
+            self._active_task.restore_state(self._initial_task_state)
+        self._active_task.set_initial_objects_in_scene()
 
     def get_observation(self) -> Observation:
-        tip = self.robot.arm.get_tip()
+        tip = self._robot.arm.get_tip()
 
         joint_forces = None
         if self._obs_config.joint_forces:
-            fs = self.robot.arm.get_joint_forces()
-            vels = self.robot.arm.get_joint_target_velocities()
+            fs = self._robot.arm.get_joint_forces()
+            vels = self._robot.arm.get_joint_target_velocities()
             joint_forces = self._obs_config.joint_forces_noise.apply(
                 np.array([-f if v < 0 else f for f, v in zip(fs, vels)]))
 
         ee_forces_flat = None
         if self._obs_config.gripper_touch_forces:
-            ee_forces = self.robot.gripper.get_touch_sensor_forces()
+            ee_forces = self._robot.gripper.get_touch_sensor_forces()
             ee_forces_flat = []
             for eef in ee_forces:
                 ee_forces_flat.extend(eef)
@@ -276,16 +270,16 @@ class Scene(object):
             front_mask=front_mask,
             joint_velocities=(
                 self._obs_config.joint_velocities_noise.apply(
-                    np.array(self.robot.arm.get_joint_velocities()))
+                    np.array(self._robot.arm.get_joint_velocities()))
                 if self._obs_config.joint_velocities else None),
             joint_positions=(
                 self._obs_config.joint_positions_noise.apply(
-                    np.array(self.robot.arm.get_joint_positions()))
+                    np.array(self._robot.arm.get_joint_positions()))
                 if self._obs_config.joint_positions else None),
             joint_forces=(joint_forces
                           if self._obs_config.joint_forces else None),
             gripper_open=(
-                (1.0 if self.robot.gripper.get_open_amount()[0] > 0.9 else 0.0)
+                (1.0 if self._robot.gripper.get_open_amount()[0] > 0.9 else 0.0)
                 if self._obs_config.gripper_open else None),
             gripper_pose=(
                 np.array(tip.get_pose())
@@ -297,18 +291,18 @@ class Scene(object):
                 ee_forces_flat
                 if self._obs_config.gripper_touch_forces else None),
             gripper_joint_positions=(
-                np.array(self.robot.gripper.get_joint_positions())
+                np.array(self._robot.gripper.get_joint_positions())
                 if self._obs_config.gripper_joint_positions else None),
             task_low_dim_state=(
-                self.task.get_low_dim_state() if
+                self._active_task.get_low_dim_state() if
                 self._obs_config.task_low_dim_state else None),
             misc=self._get_misc())
-        obs = self.task.decorate_observation(obs)
+        obs = self._active_task.decorate_observation(obs)
         return obs
 
     def step(self):
-        self.pyrep.step()
-        self.task.step()
+        self._pyrep.step()
+        self._active_task.step()
         if self._step_callback is not None:
             self._step_callback()
 
@@ -327,26 +321,24 @@ class Scene(object):
                               randomly_place=randomly_place)
         self._has_init_episode = False
 
-        waypoints = self.task.get_waypoints()
+        waypoints = self._active_task.get_waypoints()
         if len(waypoints) == 0:
             raise NoWaypointsError(
-                'No waypoints were found.', self.task)
+                'No waypoints were found.', self._active_task)
 
         demo = []
         if record:
-            self.pyrep.step()  # Need this here or get_force doesn't work...
+            self._pyrep.step()  # Need this here or get_force doesn't work...
             demo.append(self.get_observation())
         while True:
             success = False
             for i, point in enumerate(waypoints):
                 point.start_of_path()
-                if point.skip:
-                    continue
-                grasped_objects = self.robot.gripper.get_grasped_objects()
-                colliding_shapes = [s for s in self.pyrep.get_objects_in_tree(
+                grasped_objects = self._robot.gripper.get_grasped_objects()
+                colliding_shapes = [s for s in self._pyrep.get_objects_in_tree(
                     object_type=ObjectType.SHAPE) if s not in grasped_objects
                                     and s not in self._robot_shapes and s.is_collidable()
-                                    and self.robot.arm.check_arm_collision(s)]
+                                    and self._robot.arm.check_arm_collision(s)]
                 [s.set_collidable(False) for s in colliding_shapes]
                 try:
                     path = point.get_path()
@@ -355,7 +347,7 @@ class Scene(object):
                     [s.set_collidable(True) for s in colliding_shapes]
                     raise DemoError(
                         'Could not get a path for waypoint %d.' % i,
-                        self.task) from e
+                        self._active_task) from e
                 ext = point.get_ext()
                 path.visualize()
 
@@ -365,7 +357,7 @@ class Scene(object):
                     done = path.step()
                     self.step()
                     self._demo_record_step(demo, record, callable_each_step)
-                    success, term = self.task.success()
+                    success, term = self._active_task.success()
 
                 point.end_of_path()
 
@@ -374,7 +366,7 @@ class Scene(object):
                 if len(ext) > 0:
                     contains_param = False
                     start_of_bracket = -1
-                    gripper = self.robot.gripper
+                    gripper = self._robot.gripper
                     if 'open_gripper(' in ext:
                         gripper.release()
                         start_of_bracket = ext.index('open_gripper(') + 13
@@ -383,8 +375,8 @@ class Scene(object):
                             done = False
                             while not done:
                                 done = gripper.actuate(1.0, 0.04)
-                                self.pyrep.step()
-                                self.task.step()
+                                self._pyrep.step()
+                                self._active_task.step()
                                 if self._obs_config.record_gripper_closing:
                                     self._demo_record_step(
                                         demo, record, callable_each_step)
@@ -395,8 +387,8 @@ class Scene(object):
                             done = False
                             while not done:
                                 done = gripper.actuate(0.0, 0.04)
-                                self.pyrep.step()
-                                self.task.step()
+                                self._pyrep.step()
+                                self._active_task.step()
                                 if self._obs_config.record_gripper_closing:
                                     self._demo_record_step(
                                         demo, record, callable_each_step)
@@ -407,36 +399,36 @@ class Scene(object):
                         done = False
                         while not done:
                             done = gripper.actuate(num, 0.04)
-                            self.pyrep.step()
-                            self.task.step()
+                            self._pyrep.step()
+                            self._active_task.step()
                             if self._obs_config.record_gripper_closing:
                                 self._demo_record_step(
                                     demo, record, callable_each_step)
 
                     if 'close_gripper(' in ext:
-                        for g_obj in self.task.get_graspable_objects():
+                        for g_obj in self._active_task.get_graspable_objects():
                             gripper.grasp(g_obj)
 
                     self._demo_record_step(demo, record, callable_each_step)
 
-            if not self.task.should_repeat_waypoints() or success:
+            if not self._active_task.should_repeat_waypoints() or success:
                 break
 
         # Some tasks may need additional physics steps
         # (e.g. ball rowling to goal)
         if not success:
             for _ in range(10):
-                self.pyrep.step()
-                self.task.step()
+                self._pyrep.step()
+                self._active_task.step()
                 self._demo_record_step(demo, record, callable_each_step)
-                success, term = self.task.success()
+                success, term = self._active_task.success()
                 if success:
                     break
 
-        success, term = self.task.success()
+        success, term = self._active_task.success()
         if not success:
             raise DemoError('Demo was completed, but was not successful.',
-                            self.task)
+                            self._active_task)
         return Demo(demo)
 
     def get_observation_config(self) -> ObservationConfig:
@@ -516,11 +508,11 @@ class Scene(object):
     def _place_task(self) -> None:
         self._workspace_boundary.clear()
         # Find a place in the robot workspace for task
-        self.task.boundary_root().set_orientation(
+        self._active_task.boundary_root().set_orientation(
             self._initial_task_pose)
-        min_rot, max_rot = self.task.base_rotation_bounds()
+        min_rot, max_rot = self._active_task.base_rotation_bounds()
         self._workspace_boundary.sample(
-            self.task.boundary_root(),
+            self._active_task.boundary_root(),
             min_rotation=min_rot, max_rotation=max_rot)
 
     def _get_misc(self):
@@ -540,3 +532,468 @@ class Scene(object):
         misc.update(_get_cam_data(self._cam_front, 'front_camera'))
         misc.update(_get_cam_data(self._cam_wrist, 'wrist_camera'))
         return misc
+
+class Scene_template(object):
+    """Controls what is currently in the vrep scene. This is used for making
+    sure that the tasks are easily reachable. This may be just replaced by
+    environment. Responsible for moving all the objects. """
+
+    def __init__(self, pyrep: PyRep, robot: Robot,
+                 obs_config=ObservationConfig()):
+        self._pyrep = pyrep
+        self._robot = robot
+        self._obs_config = obs_config
+        self._active_task = None
+        self._initial_task_state = None
+        self._start_arm_joint_pos = robot.arm.get_joint_positions()
+        self._starting_gripper_joint_pos = robot.gripper.get_joint_positions()
+        self._workspace = Shape('workspace')
+        self._workspace_boundary = SpawnBoundary([self._workspace])
+        self._has_init_task = self._has_init_episode = False
+        self._variation_index = 0
+
+        self._initial_robot_state = (robot.arm.get_configuration_tree(),
+                                     robot.gripper.get_configuration_tree())
+
+        x, y, z = self._workspace.get_position()
+        minx, maxx, miny, maxy, _, _ = self._workspace.get_bounding_box()
+        self._workspace_minx = x - np.fabs(minx) - 0.2
+        self._workspace_maxx = x + maxx + 0.2
+        self._workspace_miny = y - np.fabs(miny) - 0.2
+        self._workspace_maxy = y + maxy + 0.2
+        self._workspace_minz = z
+        self._workspace_maxz = z + 1.0  # 1M above workspace
+
+        self.target_workspace_check = Dummy.create()
+        self._step_callback = None
+
+        self._robot_shapes = self._robot.arm.get_objects_in_tree(
+            object_type=ObjectType.SHAPE)
+
+    def load(self, task: Task) -> None:
+        """Loads the task and positions at the centre of the workspace.
+
+        :param task: The task to load in the scene.
+        """
+        task.load()  # Load the task in to the scene
+
+        # Set at the centre of the workspace
+        task.get_base().set_position(self._workspace.get_position())
+
+        self._initial_task_state = task.get_state()
+        self._active_task = task
+        self._initial_task_pose = task.boundary_root().get_orientation()
+        self._has_init_task = self._has_init_episode = False
+        self._variation_index = 0
+
+    def unload(self) -> None:
+        """Clears the scene. i.e. removes all tasks. """
+        if self._active_task is not None:
+            self._robot.gripper.release()
+            if self._has_init_task:
+                self._active_task.cleanup_()
+            self._active_task.unload()
+        self._active_task = None
+        self._variation_index = 0
+
+    def init_task(self) -> None:
+        self._active_task.init_task()
+        self._initial_task_state = self._active_task.get_state()
+        self._has_init_task = True
+        self._variation_index = 0
+
+    def init_episode(self, index: int, randomly_place: bool=True,
+                     max_attempts: int = 150) -> List[str]:
+        """Calls the task init_episode and puts randomly in the workspace.
+        """
+
+        self._variation_index = index
+
+        if not self._has_init_task:
+            self.init_task()
+
+        # Try a few times to init and place in the workspace
+        attempts = 0
+        descriptions = None
+        while attempts < max_attempts:
+            print(attempts)
+            descriptions = self._active_task.init_episode(index)
+            print('init episode in a task')
+            try:
+                if (randomly_place and
+                        not self._active_task.is_static_workspace()):
+                    self._place_task()
+                self._active_task.validate()
+                break
+            except (BoundaryError, WaypointError) as e:
+                self._active_task.cleanup_()
+                self._active_task.restore_state(self._initial_task_state)
+                attempts += 1
+                if attempts >= max_attempts:
+                    raise e
+
+        # Let objects come to rest
+        [self._pyrep.step() for _ in range(STEPS_BEFORE_EPISODE_START)]
+        self._has_init_episode = True
+        return descriptions
+
+    def reset(self) -> None:
+        """Resets the joint angles. """
+        self._robot.gripper.release()
+
+        arm, gripper = self._initial_robot_state
+        self._pyrep.set_configuration_tree(arm)
+        self._pyrep.set_configuration_tree(gripper)
+        self._robot.arm.set_joint_positions(self._start_arm_joint_pos, disable_dynamics=True)
+        self._robot.arm.set_joint_target_velocities(
+            [0] * len(self._robot.arm.joints))
+        self._robot.gripper.set_joint_positions(
+            self._starting_gripper_joint_pos, disable_dynamics=True)
+        self._robot.gripper.set_joint_target_velocities(
+            [0] * len(self._robot.gripper.joints))
+
+        if self._active_task is not None and self._has_init_task:
+            self._active_task.cleanup_()
+            self._active_task.restore_state(self._initial_task_state)
+        self._active_task.set_initial_objects_in_scene()
+
+    def get_observation(self) -> Observation:
+        obs_list = []
+        for i,camera_and_mask in enumerate(zip(self._active_task._camera,self._active_task._camera_mask)):
+            camera,camera_mask = camera_and_mask 
+            obs = dict()
+            camera.set_explicit_handling(1)
+            camera.handle_explicitly()
+
+            obs['rgb'] = camera.capture_rgb()
+            obs['depth'] = camera.capture_depth(True)
+            obs['pcd'] = camera.pointcloud_from_depth(obs['depth'])
+            camera_mask.set_explicit_handling(1)
+            camera_mask.handle_explicitly()
+            obs['mask'] = camera_mask.capture_rgb()
+            obj_list=[]
+            for obj in self._active_task.bin_objects:
+                obj_info = dict()
+                obj_info['name'] = obj.get_name()
+                obj_info['position'] = np.array(obj.get_position())
+                obj_info['orientation'] = np.array(obj.get_orientation())
+                obj_info['model_bounding_box'] = np.array(obj.get_model_bounding_box())
+                obj_list.append(obj_info)
+            obs['obj_list']=obj_list
+            obs['misc']=self._get_misc(camera,i)
+            obs_list.append(obs)
+        return obs_list
+
+    def step(self):
+        self._pyrep.step()
+        self._active_task.step()
+        if self._step_callback is not None:
+            self._step_callback()
+
+    def register_step_callback(self, func):
+        self._step_callback = func
+
+    def get_demo(self, record: bool = True,
+                 callable_each_step: Callable[[Observation], None] = None,
+                 randomly_place: bool = True) -> Demo:
+        """Returns a demo (list of observations)"""
+        self._robot.arm.set_model_renderable(False)
+        self._robot.gripper.set_model_renderable(False)
+        if not self._has_init_task:
+            self.init_task()
+        if not self._has_init_episode:
+            self.init_episode(self._variation_index,
+                              randomly_place=randomly_place)
+        self._has_init_episode = False
+        demo = []
+        if record:
+            self._pyrep.step()  # Need this here or get_force doesn't work...
+            demo.append(self.get_observation())
+        for _ in range(50):
+            self._pyrep.step()
+            self._active_task.step()
+        for _ in range(1):
+            self._pyrep.step()
+            self._active_task.step()
+            self._demo_record_step(demo, record, None)
+        return demo[1:]
+
+    def get_observation_config(self) -> ObservationConfig:
+        return self._obs_config
+
+    def check_target_in_workspace(self, target_pos: np.ndarray) -> bool:
+        x, y, z = target_pos
+        return (self._workspace_maxx > x > self._workspace_minx and
+                self._workspace_maxy > y > self._workspace_miny and
+                self._workspace_maxz > z > self._workspace_minz)
+
+    def _demo_record_step(self, demo_list, record, func):
+        if record:
+            demo_list.append(self.get_observation())
+        if func is not None:
+            func(self.get_observation())
+
+    def _set_camera_properties(self) -> None:
+        self._camera.set_explicit_handling(1)
+        self._camera.set_resolution((128,128))
+        self._camera_mask.set_explicit_handling(1)
+        self._camera_mask.set_resolution((128,128))
+
+    def _place_task(self) -> None:
+        self._workspace_boundary.clear()
+        # Find a place in the robot workspace for task
+        self._active_task.boundary_root().set_orientation(
+            self._initial_task_pose)
+        min_rot, max_rot = self._active_task.base_rotation_bounds()
+        self._workspace_boundary.sample(
+            self._active_task.boundary_root(),
+            min_rotation=min_rot, max_rotation=max_rot)
+
+    def _get_misc(self,camera,i):
+        def _get_cam_data(cam: VisionSensor, name: str):
+            d = {}
+            if cam.still_exists():
+                d = {
+                    '%s_extrinsics' % name: cam.get_matrix(),
+                    '%s_intrinsics' % name: cam.get_intrinsic_matrix(),
+                    '%s_near' % name: cam.get_near_clipping_plane(),
+                    '%s_far' % name: cam.get_far_clipping_plane(),
+                }
+            return d
+        misc = _get_cam_data(camera, f'camera{i}')
+        return misc
+
+class Scene_reach(Scene_template):
+    def get_demo(self, record: bool = True,
+                 callable_each_step: Callable[[Observation], None] = None,
+                 randomly_place: bool = True) -> Demo:
+        """Returns a demo (list of observations)"""
+        self._robot.arm.set_model_renderable(False)
+        self._robot.gripper.set_model_renderable(False)
+        print('get Demo')
+        if not self._has_init_task:
+            self.init_task()
+        if not self._has_init_episode:
+            self.init_episode(self._variation_index,
+                              randomly_place=randomly_place)
+        print('Init Episode')
+        self._has_init_episode = False
+        demo = []
+        if np.random.random() > 0.5:
+            self.gripper_control('close',demo,False)
+        waypoints = self._active_task.get_waypoints()
+        if record:
+            self._pyrep.step()  # Need this here or get_force doesn't work...
+            demo.append(self.get_observation())
+        for i, point in enumerate(waypoints):
+            point.start_of_path()
+            try:
+                path = point.get_path()
+            except ConfigurationPathError as e:
+                raise DemoError(
+                    'Could not get a path for waypoint %d.' % i,
+                    self._active_task) from e
+            path.visualize()
+            done = False
+            flag = 0
+            while not done:
+                done = path.step()
+                self.step()
+                flag += 1
+                if flag%2 == 0 and i == 2:
+                    self._demo_record_step(demo, record, callable_each_step)
+            point.end_of_path()
+            path.clear_visualization()
+        for _ in range(3):
+            self._pyrep.step()
+            self._active_task.step()
+            self._demo_record_step(demo, record, None)
+        return demo[1:]
+
+    def get_observation(self) -> Observation:
+        obs = dict()
+        self._active_task._camera.set_explicit_handling(1)
+        self._active_task._camera.handle_explicitly()
+        obs['rgb'] = self._active_task._camera.capture_rgb()
+        obs['depth'] = self._active_task._camera.capture_depth(True)
+        obs['pcd'] = self._active_task._camera.pointcloud_from_depth(obs['depth'])
+        self._active_task._camera_mask.set_explicit_handling(1)
+        self._active_task._camera_mask.handle_explicitly()
+        obs['mask'] = self._active_task._camera_mask.capture_rgb()
+        obj_list=[]
+        obs['obj_list']=obj_list
+        obs['misc']=self._get_misc()
+        link_centre_list = []
+        for i in range(1,8):
+            link = Shape(f'Panda_link{i}_respondable')
+            pos = link.get_position()
+            rot = link.get_orientation()
+            link_centre_list.append([pos,rot])
+        gripper = Shape('Panda_gripper_visual')
+        pos_gripper = gripper.get_position()
+        rot_gripper = gripper.get_orientation()
+        link_centre_list.append([pos_gripper,rot_gripper])
+        left_finger = Shape('Panda_leftfinger_visual')
+        right_finger = Shape('Panda_rightfinger_visual')
+        pos_left_finger = left_finger.get_position()
+        rot_left_finger = left_finger.get_orientation()
+        pos_right_finger = right_finger.get_position()
+        rot_right_finger = right_finger.get_orientation()
+        link_centre_list.append([pos_left_finger,rot_left_finger])
+        link_centre_list.append([pos_right_finger,rot_right_finger])
+        obs['virtual_points'] = link_centre_list
+        obj_list=[]
+        for obj in self._active_task.bin_objects:
+            obj_info = dict()
+            obj_info['name'] = obj.get_name()
+            obj_info['position'] = np.array(obj.get_position())
+            obj_info['orientation'] = np.array(obj.get_orientation())
+            obj_info['model_bounding_box'] = np.array(obj.get_model_bounding_box())
+            obj_list.append(obj_info)
+        obs['obj_list']=obj_list
+        return obs
+
+    def gripper_control(self,action='close',demo=[],record=False):
+        gripper = self._robot.gripper
+        flag = 0
+        if action == 'close':
+            done = False
+            while not done:
+                done = gripper.actuate(0.0, 0.04)
+                self._pyrep.step()
+                self._active_task.step()
+                flag += 1
+                if flag%2 == 0:
+                    self._demo_record_step(demo, record, None)
+        if action == 'open':
+            done = False
+            while not done:
+                done = gripper.actuate(1.0, 0.04)
+                self._pyrep.step()
+                self._active_task.step()
+                flag += 1
+                if flag%2 == 0:
+                    self._demo_record_step(demo, record, None)
+
+    def _get_misc(self):
+        def _get_cam_data(cam: VisionSensor, name: str):
+            d = {}
+            if cam.still_exists():
+                d = {
+                    '%s_extrinsics' % name: cam.get_matrix(),
+                    '%s_intrinsics' % name: cam.get_intrinsic_matrix(),
+                    '%s_near' % name: cam.get_near_clipping_plane(),
+                    '%s_far' % name: cam.get_far_clipping_plane(),
+                }
+            return d
+        misc = _get_cam_data(self._active_task._camera, 'camera')
+        return misc
+
+class Scene_push(Scene_template):
+    def get_demo(self, record: bool = True,
+                 callable_each_step: Callable[[Observation], None] = None,
+                 randomly_place: bool = True) -> Demo:
+        """Returns a demo (list of observations)"""
+        self._robot.arm.set_model_renderable(False)
+        self._robot.gripper.set_model_renderable(False)
+        if not self._has_init_task:
+            self.init_task()
+        if not self._has_init_episode:
+            self.init_episode(self._variation_index,
+                              randomly_place=randomly_place)
+        self._has_init_episode = False
+        demo = []
+        self.gripper_control('close',demo,False)
+        waypoints = self._active_task.get_waypoints()
+        if record:
+            self._pyrep.step()  # Need this here or get_force doesn't work...
+            demo.append(self.get_observation())
+        for i, point in enumerate(waypoints):
+            point.start_of_path()
+            try:
+                path = point.get_path()
+            except ConfigurationPathError as e:
+                raise DemoError(
+                    'Could not get a path for waypoint %d.' % i,
+                    self._active_task) from e
+            path.visualize()
+            done = False
+            flag = 0
+            while not done:
+                done = path.step()
+                self.step()
+                flag += 1
+                if flag%2 == 0 and i == 2:
+                    self._demo_record_step(demo, record, callable_each_step)
+            point.end_of_path()
+            path.clear_visualization()
+        for _ in range(3):
+            self._pyrep.step()
+            self._active_task.step()
+            self._demo_record_step(demo, record, None)
+        return demo[1:]
+
+    def get_observation(self) -> Observation:
+        obs = dict()
+        self._active_task._camera.set_explicit_handling(1)
+        self._active_task._camera.handle_explicitly()
+        obs['rgb'] = self._active_task._camera.capture_rgb()
+        obs['depth'] = self._active_task._camera.capture_depth(True)
+        obs['pcd'] = self._active_task._camera.pointcloud_from_depth(obs['depth'])
+        self._active_task._camera_mask.set_explicit_handling(1)
+        self._active_task._camera_mask.handle_explicitly()
+        obs['mask'] = self._active_task._camera_mask.capture_rgb()
+        obj_list=[]
+        obs['obj_list']=obj_list
+        obs['misc']=self._get_misc()
+        link_centre_list = []
+        for i in range(1,8):
+            link = Shape(f'Panda_link{i}_respondable')
+            pos = link.get_position()
+            rot = link.get_orientation()
+            link_centre_list.append([pos,rot])
+        gripper = Shape('Panda_gripper_visual')
+        pos_gripper = gripper.get_position()
+        rot_gripper = gripper.get_orientation()
+        link_centre_list.append([pos_gripper,rot_gripper])
+        left_finger = Shape('Panda_leftfinger_visual')
+        right_finger = Shape('Panda_rightfinger_visual')
+        pos_left_finger = left_finger.get_position()
+        rot_left_finger = left_finger.get_orientation()
+        pos_right_finger = right_finger.get_position()
+        rot_right_finger = right_finger.get_orientation()
+        link_centre_list.append([pos_left_finger,rot_left_finger])
+        link_centre_list.append([pos_right_finger,rot_right_finger])
+        obs['virtual_points'] = link_centre_list
+        obj_list=[]
+        for obj in self._active_task.bin_objects:
+            obj_info = dict()
+            obj_info['name'] = obj.get_name()
+            obj_info['position'] = np.array(obj.get_position())
+            obj_info['orientation'] = np.array(obj.get_orientation())
+            obj_info['model_bounding_box'] = np.array(obj.get_model_bounding_box())
+            obj_list.append(obj_info)
+        obs['obj_list']=obj_list
+        return obs
+
+    def gripper_control(self,action='close',demo=[],record=False):
+        gripper = self._robot.gripper
+        flag = 0
+        if action == 'close':
+            done = False
+            while not done:
+                done = gripper.actuate(0.0, 0.04)
+                self._pyrep.step()
+                self._active_task.step()
+                flag += 1
+                if flag%2 == 0:
+                    self._demo_record_step(demo, record, None)
+        if action == 'open':
+            done = False
+            while not done:
+                done = gripper.actuate(1.0, 0.04)
+                self._pyrep.step()
+                self._active_task.step()
+                flag += 1
+                if flag%2 == 0:
+                    self._demo_record_step(demo, record, None)

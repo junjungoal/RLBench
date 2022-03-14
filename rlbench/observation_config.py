@@ -106,3 +106,19 @@ class ObservationConfig(object):
         self.gripper_touch_forces = value
         self.wrist_camera_matrix = value
         self.task_low_dim_state = value
+
+class CameraConfig_min(object):
+    def __init__(self,
+                 rgb=True,
+                 rgb_noise: NoiseModel=Identity(),
+                 image_size=(128, 128),
+                 render_mode=RenderMode.OPENGL):
+        self.rgb = rgb
+        self.rgb_noise = rgb_noise
+        self.image_size = image_size
+        self.render_mode = render_mode
+
+
+class ObservationConfig_min(object):
+    def __init__(self,camera):
+        self.camera = camera
