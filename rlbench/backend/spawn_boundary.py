@@ -133,7 +133,7 @@ class BoundaryObject(object):
 
 class SpawnBoundary(object):
 
-    MAX_SAMPLES = 100
+    MAX_SAMPLES = 20
 
     def __init__(self, boundaries: List[Object]):
         self._boundaries = []
