@@ -19,6 +19,7 @@ from rlbench.observation_config import CameraConfig_min as CameraConfig
 from rlbench.backend.robot import Robot
 from rlbench.utils import name_to_task_class
 from tools.task_validator import task_smoke, TaskValidationError
+import argparse
 
 CURRENT_DIR = dirname(abspath(__file__))
 
@@ -30,12 +31,13 @@ def print_fail(message, end='\n'):
 
 class LoadedTask(object):
 
-    def __init__(self, pr: PyRep, scene: Scene, robot: Robot):
+    def __init__(self, pr: PyRep, scene: Scene, robot: Robot, save_dir):
         self.pr = pr
         self.scene = scene
         self.robot = robot
         self.task = self.task_class = self.task_file = None
         self._variation_index = 0
+        self.save_dir = save_dir
 
     def _load_task_to_scene(self):
         self.scene.unload()
@@ -52,7 +54,8 @@ class LoadedTask(object):
             self.task.get_base().set_position(Shape('workspace').get_position())
 
     def _edit_new_task(self):
-        task_file = input('What task would you like to edit?\n')
+        # task_file = input('What task would you like to edit?\n')
+        task_file = 'move_objs'
         if len(task_file) > 3 and task_file[-3:] != '.py':
             task_file += '.py'
         try:
@@ -136,8 +139,9 @@ class LoadedTask(object):
         #success, terminate = self.task.success()
         #success=True
         if success:
-            indx_num=len(os.listdir('/home/jun/projects/RLBench/datasets/3D_data/P2D3D2/raw'))
-            np.save('/home/jun/projects/RLBench/datasets/3D_data/P2D3D2/raw/{}.npy'.format(indx_num),demo)
+            n_data = len(os.listdir(args.save_dir))
+            print('Num files: ', n_data)
+            np.save(os.path.join(args.save_dir, f'datapoint_{n_data}.npy'), demo)
         
         self.scene.reset()
         self.pr.step_ui()
@@ -208,25 +212,28 @@ class LoadedTask(object):
 
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--save_dir', type=str)
+    args = parser.parse_args()
+
+    if not os.path.exists(args.save_dir):
+        os.makedirs(args.save_dir)
+
     pr = PyRep()
-    ttt_file = '/home/jun/projects/RLBench/tools/a3d/move_objs.ttt'#join(CURRENT_DIR, TTT_FILE)
+
+    #ttt_file = '/home/{}/projects/RLBench/tools/a3d/move_objs_zoom.v10.ttt'.format(os.environ['USER'])
+    ttt_file = '/home/{}/projects/RLBench/tools/a3d/move_objs_latest.ttt'.format(os.environ['USER'])
     pr.launch(ttt_file, responsive_ui=True)
     pr.step_ui()
     pr.set_simulation_timestep(0.005)
     pr.step_ui()
 
     robot = Robot(Panda(), PandaGripper())
-    #cam_config = CameraConfig(rgb=True, depth=False, mask=False,
-                              #render_mode=RenderMode.OPENGL)
-    cam_config = CameraConfig(image_size=(450, 450))
+    cam_config = CameraConfig(image_size=(128, 128))
     obs_config = ObservationConfig(cam_config)
-    #obs_config.set_all(False)
-    #obs_config.right_shoulder_camera = cam_config
-    #obs_config.left_shoulder_camera = cam_config
-    #obs_config.wrist_camera = cam_config
 
     scene = Scene(pr, robot, obs_config)
-    loaded_task = LoadedTask(pr, scene, robot)
+    loaded_task = LoadedTask(pr, scene, robot, save_dir=args.save_dir)
 
     print('  ,')
     print(' /(  ___________')
@@ -235,60 +242,13 @@ if __name__ == '__main__':
     print(' ""')
 
     loaded_task.new_task()
+    loaded_task.reload_python()
+    loaded_task.reset_variation()
+    pr.start()
+    pr.step_ui()
+    for i in range(60000):
+        loaded_task.new_demo()
 
-    while True:
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print('\n-----------------\n')
-        print('The python file will be reloaded when simulation is restarted.')
-        print('(q) to quit.')
-        if pr.running:
-            print('(+) stop the simulator')
-            print('(v) for task variation.')
-            print('(e) for episode of same variation.')
-            print('(d) for demo.')
-            print('(p) for running the sim for 100 steps.')
-        else:
-            print('(!) to run task validator.')
-            print('(+) run the simulator')
-            print('(n) for new task.')
-            print('(s) to save the .ttm')
-            print('(r) to rename the task')
-
-        inp = input()
-
-        if inp == 'q':
-            break
-
-        if pr.running:
-            if inp == '+':
-                pr.stop()
-                pr.step_ui()
-            elif inp == 'p':
-                [pr.step() for _ in range(100)]
-            elif inp == 'd':
-                for i in range(2000):
-                    loaded_task.new_demo()
-            elif inp == 'v':
-                loaded_task.new_variation()
-            elif inp == 'e':
-                loaded_task.new_episode()
-        else:
-            if inp == '+':
-                loaded_task.reload_python()
-                loaded_task.reset_variation()
-                pr.start()
-                pr.step_ui()
-            elif inp == 'n':
-                inp = input('Do you want to save the current task first?\n')
-                if inp == 'y':
-                    loaded_task.save_task()
-                loaded_task.new_task()
-            elif inp == 's':
-                loaded_task.save_task()
-            elif inp == '!':
-                loaded_task.run_task_validator()
-            elif inp == 'r':
-                loaded_task.rename()
 
     pr.stop()
     pr.shutdown()

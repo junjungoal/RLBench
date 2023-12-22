@@ -1,4 +1,5 @@
 from rlbench.tasks.basketball_in_hoop import BasketballInHoop
+from rlbench.tasks.move_objs import MoveObjs
 from rlbench.tasks.beat_the_buzz import BeatTheBuzz
 from rlbench.tasks.block_pyramid import BlockPyramid
 from rlbench.tasks.change_channel import ChangeChannel

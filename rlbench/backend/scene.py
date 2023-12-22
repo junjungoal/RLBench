@@ -616,9 +616,7 @@ class Scene_template(object):
         attempts = 0
         descriptions = None
         while attempts < max_attempts:
-            print(attempts)
             descriptions = self._active_task.init_episode(index)
-            print('init episode in a task')
             try:
                 if (randomly_place and
                         not self._active_task.is_static_workspace()):
@@ -697,8 +695,8 @@ class Scene_template(object):
                  callable_each_step: Callable[[Observation], None] = None,
                  randomly_place: bool = True) -> Demo:
         """Returns a demo (list of observations)"""
-        self._robot.arm.set_model_renderable(False)
-        self._robot.gripper.set_model_renderable(False)
+        # self._robot.arm.set_model_renderable(False)
+        # self._robot.gripper.set_model_renderable(False)
         if not self._has_init_task:
             self.init_task()
         if not self._has_init_episode:
@@ -768,8 +766,8 @@ class Scene_reach(Scene_template):
                  callable_each_step: Callable[[Observation], None] = None,
                  randomly_place: bool = True) -> Demo:
         """Returns a demo (list of observations)"""
-        self._robot.arm.set_model_renderable(False)
-        self._robot.gripper.set_model_renderable(False)
+        # self._robot.arm.set_model_renderable(False)
+        # self._robot.gripper.set_model_renderable(False)
         print('get Demo')
         if not self._has_init_task:
             self.init_task()
@@ -779,8 +777,8 @@ class Scene_reach(Scene_template):
         print('Init Episode')
         self._has_init_episode = False
         demo = []
-        if np.random.random() > 0.5:
-            self.gripper_control('close',demo,False)
+        # if np.random.random() > 0.5:
+        self.gripper_control('close',demo,False)
         waypoints = self._active_task.get_waypoints()
         if record:
             self._pyrep.step()  # Need this here or get_force doesn't work...
@@ -814,43 +812,43 @@ class Scene_reach(Scene_template):
         obs = dict()
         self._active_task._camera.set_explicit_handling(1)
         self._active_task._camera.handle_explicitly()
-        obs['rgb'] = self._active_task._camera.capture_rgb()
-        obs['depth'] = self._active_task._camera.capture_depth(True)
-        obs['pcd'] = self._active_task._camera.pointcloud_from_depth(obs['depth'])
+        obs['rgb'] = (self._active_task._camera.capture_rgb()*255.).astype(np.uint8)
+        # obs['depth'] = self._active_task._camera.capture_depth(True)
+        # obs['pcd'] = self._active_task._camera.pointcloud_from_depth(obs['depth'])
         self._active_task._camera_mask.set_explicit_handling(1)
         self._active_task._camera_mask.handle_explicitly()
-        obs['mask'] = self._active_task._camera_mask.capture_rgb()
-        obj_list=[]
-        obs['obj_list']=obj_list
-        obs['misc']=self._get_misc()
-        link_centre_list = []
-        for i in range(1,8):
-            link = Shape(f'Panda_link{i}_respondable')
-            pos = link.get_position()
-            rot = link.get_orientation()
-            link_centre_list.append([pos,rot])
-        gripper = Shape('Panda_gripper_visual')
-        pos_gripper = gripper.get_position()
-        rot_gripper = gripper.get_orientation()
-        link_centre_list.append([pos_gripper,rot_gripper])
-        left_finger = Shape('Panda_leftfinger_visual')
-        right_finger = Shape('Panda_rightfinger_visual')
-        pos_left_finger = left_finger.get_position()
-        rot_left_finger = left_finger.get_orientation()
-        pos_right_finger = right_finger.get_position()
-        rot_right_finger = right_finger.get_orientation()
-        link_centre_list.append([pos_left_finger,rot_left_finger])
-        link_centre_list.append([pos_right_finger,rot_right_finger])
-        obs['virtual_points'] = link_centre_list
-        obj_list=[]
-        for obj in self._active_task.bin_objects:
-            obj_info = dict()
-            obj_info['name'] = obj.get_name()
-            obj_info['position'] = np.array(obj.get_position())
-            obj_info['orientation'] = np.array(obj.get_orientation())
-            obj_info['model_bounding_box'] = np.array(obj.get_model_bounding_box())
-            obj_list.append(obj_info)
-        obs['obj_list']=obj_list
+        # obs['mask'] = (self._active_task._camera_mask.capture_rgb()*255.).astype(np.uint8)
+        # obj_list=[]
+        # obs['obj_list']=obj_list
+        # obs['misc']=self._get_misc()
+        # link_centre_list = []
+        # for i in range(1,8):
+        #     link = Shape(f'Panda_link{i}_respondable')
+        #     pos = link.get_position()
+        #     rot = link.get_orientation()
+        #     link_centre_list.append([pos,rot])
+        # gripper = Shape('Panda_gripper_visual')
+        # pos_gripper = gripper.get_position()
+        # rot_gripper = gripper.get_orientation()
+        # link_centre_list.append([pos_gripper,rot_gripper])
+        # left_finger = Shape('Panda_leftfinger_visual')
+        # right_finger = Shape('Panda_rightfinger_visual')
+        # pos_left_finger = left_finger.get_position()
+        # rot_left_finger = left_finger.get_orientation()
+        # pos_right_finger = right_finger.get_position()
+        # rot_right_finger = right_finger.get_orientation()
+        # link_centre_list.append([pos_left_finger,rot_left_finger])
+        # link_centre_list.append([pos_right_finger,rot_right_finger])
+        # obs['virtual_points'] = link_centre_list
+        # obj_list=[]
+        # for obj in self._active_task.bin_objects:
+        #     obj_info = dict()
+        #     obj_info['name'] = obj.get_name()
+        #     obj_info['position'] = np.array(obj.get_position())
+        #     obj_info['orientation'] = np.array(obj.get_orientation())
+        #     obj_info['model_bounding_box'] = np.array(obj.get_model_bounding_box())
+        #     obj_list.append(obj_info)
+        # obs['obj_list']=obj_list
         return obs
 
     def gripper_control(self,action='close',demo=[],record=False):
@@ -894,8 +892,8 @@ class Scene_push(Scene_template):
                  callable_each_step: Callable[[Observation], None] = None,
                  randomly_place: bool = True) -> Demo:
         """Returns a demo (list of observations)"""
-        self._robot.arm.set_model_renderable(False)
-        self._robot.gripper.set_model_renderable(False)
+        # self._robot.arm.set_model_renderable(False)
+        # self._robot.gripper.set_model_renderable(False)
         if not self._has_init_task:
             self.init_task()
         if not self._has_init_episode:
