@@ -222,7 +222,8 @@ if __name__ == '__main__':
     pr = PyRep()
 
     #ttt_file = '/home/{}/projects/RLBench/tools/a3d/move_objs_zoom.v10.ttt'.format(os.environ['USER'])
-    ttt_file = '/home/{}/projects/RLBench/tools/a3d/move_objs_latest.ttt'.format(os.environ['USER'])
+    # ttt_file = '/home/{}/projects/RLBench/tools/a3d/move_objs_latest.ttt'.format(os.environ['USER'])
+    ttt_file = '/home/{}/projects/RLBench/tools/a3d/move_objs_latest_top.ttt'.format(os.environ['USER'])
     pr.launch(ttt_file, responsive_ui=True)
     pr.step_ui()
     pr.set_simulation_timestep(0.005)
